@@ -85,24 +85,18 @@ type CreateArgs = {
 /* ------------------------------- networking ------------------------------ */
 
 function httpGet(
-  url: string,
-  extraHeaders?: Record<string, string>,
-): Promise<IncomingMessage> {
-  return new Promise((resolve, reject) => {
-    const opts = {
-      headers: { "User-Agent": UA, ...(extraHeaders || {}) } as Record<
-        string,
-        string
-      >,
-    };
-
-    const doGet = (u: string, hop = 0) => {
-      if (hop > 10) return reject(new Error("Too many redirects"));
-      https
-        .get(u, opts, (res) => {
+    url: string,
+    extraHeaders?: Record<string, string>,
+  ): Promise<IncomingMessage> {
+    return new Promise((resolve, reject) => {
+      const opts = { headers: { "User-Agent": UA, ...(extraHeaders || {}) } };
+  
+      const doGet = (u: string, hop = 0) => {
+        if (hop > 10) return reject(new Error("Too many redirects"));
+        https.get(u, opts, (res: IncomingMessage & { headers: IncomingMessage["headers"] }) => {
           const code = res.statusCode ?? 0;
           if (code >= 300 && code < 400 && res.headers.location) {
-            const next = new URL(res.headers.location, u).toString();
+            const next = new URL(res.headers.location as string, u).toString();
             res.resume();
             doGet(next, hop + 1);
             return;
@@ -112,37 +106,40 @@ function httpGet(
           } else {
             resolve(res);
           }
-        })
-        .on("error", reject);
-    };
-
-    doGet(url);
-  });
-}
-
+        }).on("error", reject);
+      };
+  
+      doGet(url);
+    });
+  }
+  
 /** Download with optional byte-progress callback (ratio 0..1 when Content-Length is known) */
 async function download(
-  url: string,
-  dest: string,
-  onProgress?: (ratio: number) => void,
-) {
-  ensureDir(path.dirname(dest));
-  const rs = await httpGet(url);
-  const total = Number((rs.headers?.["content-length"] as string) || 0);
-  let seen = 0;
-
-  await new Promise<void>((resolve, reject) => {
-    const ws = fs.createWriteStream(dest);
-    rs.on("data", (chunk: Buffer) => {
-      seen += chunk.length;
-      if (total && onProgress) onProgress(seen / total);
+    url: string,
+    dest: string,
+    onProgress?: (ratio: number) => void,
+  ) {
+    ensureDir(path.dirname(dest));
+  
+    const rs = await httpGet(url); // IncomingMessage
+    const lenHeader = rs.headers["content-length"];
+    const total = Number(Array.isArray(lenHeader) ? lenHeader[0] : lenHeader || 0);
+  
+    let seen = 0;
+  
+    await new Promise<void>((resolve, reject) => {
+      const ws = fs.createWriteStream(dest);
+      rs.on("data", (chunk: Buffer) => {
+        seen += chunk.length;
+        if (total && onProgress) onProgress(seen / total);
+      });
+      rs.on("error", reject);
+      ws.on("error", reject);
+      ws.on("finish", resolve);
+      rs.pipe(ws);
     });
-    rs.on("error", reject);
-    ws.on("error", reject);
-    ws.on("finish", resolve);
-    rs.pipe(ws);
-  });
-}
+  }
+  
 
 /* -------------------------------- helpers -------------------------------- */
 
