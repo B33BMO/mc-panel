@@ -6,6 +6,6 @@ export async function POST(
   ctx: { params: Promise<{ name: string }> }
 ) {
   const { name } = await ctx.params;
-  await restartServer(name);
-  return NextResponse.json({ ok: true });
+  const out = await restartServer(name); // StartResult
+  return NextResponse.json({ ok: true, ...out });
 }

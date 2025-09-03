@@ -4,10 +4,10 @@ import fs from "node:fs";
 import path from "node:path";
 import { spawn } from "node:child_process";
 
-export const dynamic = "force-dynamic"; // keep it streaming-friendly
+export const dynamic = "force-dynamic";
 
 export async function GET(
-  _req: Request,
+  req: Request,
   ctx: { params: Promise<{ name: string }> }
 ) {
   const { name } = await ctx.params;
@@ -18,6 +18,8 @@ export async function GET(
   const stream = new ReadableStream({
     start(controller) {
       const enc = new TextEncoder();
+
+      // tail -F will follow even if the file is rotated/recreated
       const tail = spawn("tail", ["-n", "200", "-F", logFile]);
 
       const pump = (b: Buffer) => {
@@ -27,14 +29,15 @@ export async function GET(
 
       tail.stdout.on("data", pump);
       tail.stderr.on("data", pump);
-      tail.on("close", () => controller.close());
 
-      // Cleanup on client disconnect
-      // @ts-expect-error: not in TS types yet; runtime has it
-      controller.signal?.addEventListener?.("abort", () => {
+      const close = () => {
         try { tail.kill("SIGTERM"); } catch {}
         controller.close();
-      });
+      };
+      tail.on("close", close);
+
+      // Proper abort: use the request's signal
+      req.signal?.addEventListener?.("abort", close);
     },
   });
 

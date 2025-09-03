@@ -6,6 +6,6 @@ export async function POST(
   ctx: { params: Promise<{ name: string }> }
 ) {
   const { name } = await ctx.params;
-  await stopServer(name);
-  return NextResponse.json({ ok: true });
+  const out = await stopServer(name); // { ok, message }
+  return NextResponse.json(out, { status: out.ok ? 200 : 400 });
 }
