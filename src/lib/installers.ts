@@ -71,6 +71,8 @@ const FORGE_PROMOS =
 const NEOFORGE_META =
   "https://maven.neoforged.net/releases/net/neoforged/neoforge/maven-metadata.xml";
 
+/* --------------------------------- types --------------------------------- */
+
 type Flavor = "vanilla" | "fabric" | "forge" | "neoforge";
 type CreateArgs = {
   name: string;
@@ -80,23 +82,29 @@ type CreateArgs = {
   port: string;
   eula: boolean;
   curseforgeServerZipUrl?: string;
+  /** Add common server-side optimization mods (where compatible) */
+  optimize?: boolean;
 };
+
+type Loader = "fabric" | "quilt" | "forge" | "neoforge";
 
 /* ------------------------------- networking ------------------------------ */
 
 function httpGet(
-    url: string,
-    extraHeaders?: Record<string, string>,
-  ): Promise<IncomingMessage> {
-    return new Promise((resolve, reject) => {
-      const opts = { headers: { "User-Agent": UA, ...(extraHeaders || {}) } };
-  
-      const doGet = (u: string, hop = 0) => {
-        if (hop > 10) return reject(new Error("Too many redirects"));
-        https.get(u, opts, (res: IncomingMessage & { headers: IncomingMessage["headers"] }) => {
+  url: string,
+  extraHeaders?: Record<string, string>,
+): Promise<IncomingMessage> {
+  return new Promise((resolve, reject) => {
+    const opts: https.RequestOptions = {
+      headers: { "User-Agent": UA, ...(extraHeaders || {}) },
+    };
+    const doGet = (u: string, hop = 0) => {
+      if (hop > 10) return reject(new Error("Too many redirects"));
+      https
+        .get(u, opts, (res) => {
           const code = res.statusCode ?? 0;
           if (code >= 300 && code < 400 && res.headers.location) {
-            const next = new URL(res.headers.location as string, u).toString();
+            const next = new URL(String(res.headers.location), u).toString();
             res.resume();
             doGet(next, hop + 1);
             return;
@@ -106,40 +114,37 @@ function httpGet(
           } else {
             resolve(res);
           }
-        }).on("error", reject);
-      };
-  
-      doGet(url);
-    });
-  }
-  
+        })
+        .on("error", reject);
+    };
+    doGet(url);
+  });
+}
+
 /** Download with optional byte-progress callback (ratio 0..1 when Content-Length is known) */
 async function download(
-    url: string,
-    dest: string,
-    onProgress?: (ratio: number) => void,
-  ) {
-    ensureDir(path.dirname(dest));
-  
-    const rs = await httpGet(url); // IncomingMessage
-    const lenHeader = rs.headers["content-length"];
-    const total = Number(Array.isArray(lenHeader) ? lenHeader[0] : lenHeader || 0);
-  
-    let seen = 0;
-  
-    await new Promise<void>((resolve, reject) => {
-      const ws = fs.createWriteStream(dest);
-      rs.on("data", (chunk: Buffer) => {
-        seen += chunk.length;
-        if (total && onProgress) onProgress(seen / total);
-      });
-      rs.on("error", reject);
-      ws.on("error", reject);
-      ws.on("finish", resolve);
-      rs.pipe(ws);
+  url: string,
+  dest: string,
+  onProgress?: (ratio: number) => void,
+) {
+  ensureDir(path.dirname(dest));
+  const rs = await httpGet(url);
+  const lenHeader = rs.headers["content-length"];
+  const total = Number(Array.isArray(lenHeader) ? lenHeader[0] : lenHeader || 0);
+  let seen = 0;
+
+  await new Promise<void>((resolve, reject) => {
+    const ws = fs.createWriteStream(dest);
+    rs.on("data", (chunk: Buffer) => {
+      seen += chunk.length;
+      if (total && onProgress) onProgress(seen / total);
     });
-  }
-  
+    rs.on("error", reject);
+    ws.on("error", reject);
+    ws.on("finish", resolve);
+    rs.pipe(ws);
+  });
+}
 
 /* -------------------------------- helpers -------------------------------- */
 
@@ -435,80 +440,160 @@ async function neoforgeInstallerUrl(
   };
 }
 
+/* ------------------------ optimization (Modrinth) ------------------------ */
+
+const OPTIMIZATION_MODS: Record<Loader, string[]> = {
+  fabric: [
+    "lithium",
+    "ferrite-core",
+    "krypton",
+    "c2me-fabric",
+    "servercore",
+    "memoryleakfix",
+    "lazydfu",
+  ],
+  quilt: [
+    "lithium",
+    "ferrite-core",
+    "krypton",
+    "c2me-fabric",
+    "servercore",
+    "memoryleakfix",
+    "lazydfu",
+  ],
+  forge: ["ferrite-core", "memoryleakfix", "lazydfu"],
+  neoforge: ["ferrite-core", "memoryleakfix", "lazydfu"],
+};
 /* ------------------------------- installers ------------------------------ */
 
 function runJavaInstaller(cwd: string, jarPath: string, args: string[]) {
-  const r = spawnSync("java", ["-jar", jarPath, ...args], {
-    cwd,
-    stdio: "inherit",
+    const r = spawnSync("java", ["-jar", jarPath, ...args], {
+      cwd,
+      stdio: "inherit",
+    });
+    if (r.status !== 0) throw new Error(`Installer failed: ${jarPath}`);
+  }
+  
+  async function installCurseForgeServerZip(
+    dir: string,
+    url: string,
+    onStep?: Stepper,
+  ) {
+    const say: Stepper = async (m) => { try { await onStep?.(m); } catch {} };
+    const p = new Progress(say);
+    const zipPath = path.join(dir, "cf-server-pack.zip");
+  
+    // ~20%: download
+    p.start(0.20, "Fetching CurseForge server pack…");
+    await download(url, zipPath, (r) => p.emit(r, "Downloading server pack…"));
+    p.end("Downloaded server pack.");
+  
+    // space check (best-effort) + sanity
+    const zipStat = fs.existsSync(zipPath) ? fs.statSync(zipPath) : null;
+    const freeKB = diskFreeKB(dir);
+    if (zipStat && freeKB && freeKB * 1024 < zipStat.size * 2.5) {
+      throw new Error(
+        `Not enough disk space to extract server pack. Have ~${(freeKB/1024/1024).toFixed(1)} GB, ` +
+        `need at least ~${(zipStat.size*2.5/1024/1024/1024).toFixed(1)} GB.`,
+      );
+    }
+    assertZipMagic(zipPath);
+  
+    // ~10%: extract (exclude client junk)
+    p.start(0.10, "Extracting server pack…");
+    const exclude = [
+      "overrides/*", "overrides/**",
+      "resourcepacks/*", "resourcepacks/**",
+      "shaderpacks/*", "shaderpacks/**",
+      "*.zip", "*.zip.txt", "*/*.zip", "*/*.zip.txt",
+    ];
+    const uz = spawnSync("unzip", ["-o", zipPath, "-d", dir, "-x", ...exclude], { stdio: "inherit" });
+    if (uz.status !== 0) {
+      safeRm(path.join(dir, "overrides"));
+      throw new Error("Failed to unzip server pack (disk full or corrupt zip).");
+    }
+  
+    // post-extract cleanup
+    safeRm(path.join(dir, "overrides"));
+    safeRm(path.join(dir, "resourcepacks"));
+    safeRm(path.join(dir, "shaderpacks"));
+    p.end("Server pack extracted.");
+  }
+  
+async function modrinthLatestDownloadUrl(
+  slug: string,
+  mcVersion: string,
+  loaders: Loader[],
+): Promise<string | null> {
+  const params = new URLSearchParams({
+    game_versions: JSON.stringify([mcVersion]),
+    loaders: JSON.stringify(loaders),
   });
-  if (r.status !== 0) throw new Error(`Installer failed: ${jarPath}`);
+  const url = `https://api.modrinth.com/v2/project/${encodeURIComponent(
+    slug,
+  )}/version?${params.toString()}`;
+
+  const rs = await httpGet(url);
+  let body = "";
+  for await (const c of rs) body += c;
+  const versions = JSON.parse(body) as Array<{
+    files?: Array<{ url: string; primary?: boolean }>;
+  }>;
+  if (!Array.isArray(versions) || versions.length === 0) return null;
+  const files = versions[0].files ?? [];
+  const primary = files.find((f) => f.primary) ?? files[0];
+  return primary?.url ?? null;
 }
 
-async function installCurseForgeServerZip(
-  dir: string,
-  url: string,
-  onStep?: Stepper,
-) {
-  const say = async (m: string) => {
+async function installOptimizations(opts: {
+  dir: string;
+  flavor: Flavor;
+  mcVersion: string;
+  say: Stepper;
+}) {
+  if (opts.flavor === "vanilla") return;
+
+  const loader: Loader =
+    opts.flavor === "fabric"
+      ? "fabric"
+      : opts.flavor === "forge"
+      ? "forge"
+      : opts.flavor === "neoforge"
+      ? "neoforge"
+      : "fabric";
+
+  const modsDir = path.join(opts.dir, "mods");
+  ensureDir(modsDir);
+
+  await opts.say(`Adding optimization mods (${loader})…`);
+  const slugs = OPTIMIZATION_MODS[loader];
+
+  for (const slug of slugs) {
     try {
-      await onStep?.(m);
-    } catch {}
-  };
-  const p = new Progress(say);
-  const zipPath = path.join(dir, "cf-server-pack.zip");
-
-  p.start(0.2, "Fetching CurseForge server pack…");
-  await download(url, zipPath, (r) => p.emit(r, "Downloading server pack…"));
-  p.end("Downloaded server pack.");
-
-  const zipStat = fs.existsSync(zipPath) ? fs.statSync(zipPath) : null;
-  const freeKB = diskFreeKB(dir);
-  if (zipStat && freeKB && freeKB * 1024 < zipStat.size * 2.5) {
-    throw new Error(
-      `Not enough disk space to extract server pack. Have ~${(
-        freeKB /
-        1024 /
-        1024
-      ).toFixed(1)} GB, need at least ~${(
-        (zipStat.size * 2.5) /
-        1024 /
-        1024 /
-        1024
-      ).toFixed(1)} GB.`,
-    );
+      const dl = await modrinthLatestDownloadUrl(slug, opts.mcVersion, [loader]);
+      if (!dl) {
+        await opts.say(`Skipping ${slug}: no compatible build found.`);
+        continue;
+      }
+      const filename = path.basename(new URL(dl).pathname);
+      const dest = path.join(modsDir, filename);
+      await opts.say(`Downloading ${slug}…`);
+      await download(dl, dest, (r) =>
+        opts.say(`Downloading ${slug}… ${Math.round(r * 100)}%`),
+      );
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      await opts.say(`Failed ${slug}: ${msg}`);
+    }
   }
-  assertZipMagic(zipPath);
 
-  p.start(0.1, "Extracting server pack…");
-  const exclude = [
-    "overrides/*",
-    "overrides/**",
-    "resourcepacks/*",
-    "resourcepacks/**",
-    "shaderpacks/*",
-    "shaderpacks/**",
-    "*.zip",
-    "*.zip.txt",
-    "*/*.zip",
-    "*/*.zip.txt",
-  ];
-  const args = ["-o", zipPath, "-d", dir, "-x", ...exclude];
-  const uz = spawnSync("unzip", args, { stdio: "inherit" });
-  if (uz.status !== 0) {
-    safeRm(path.join(dir, "overrides"));
-    throw new Error("Failed to unzip server pack (disk full or corrupt zip).");
-  }
-  safeRm(path.join(dir, "overrides"));
-  safeRm(path.join(dir, "resourcepacks"));
-  safeRm(path.join(dir, "shaderpacks"));
-  p.end("Server pack extracted.");
+  await opts.say("Optimization mods installed.");
 }
 
 /* --------------------------------- main ---------------------------------- */
 
 export async function createServer(args: CreateArgs, onStep?: Stepper) {
-  const say = async (m: string) => {
+  const say: Stepper = async (m: string) => {
     try {
       await onStep?.(m);
     } catch {}
@@ -563,6 +648,12 @@ export async function createServer(args: CreateArgs, onStep?: Stepper) {
       : "server.jar";
     makeScripts(serverDir, `-jar ${launch}`, args.memory);
     p.end("Launch scripts ready.");
+
+    if (args.optimize) {
+      p.start(0.1, "Installing optimization mods…");
+      await installOptimizations({ dir: serverDir, flavor: "fabric", mcVersion: ver, say });
+      p.end("Optimization mods installed.");
+    }
   } else if (args.flavor === "forge") {
     const inst = await forgeInstallerUrl(ver);
     const instJar = path.join(serverDir, "forge-installer.jar");
@@ -590,6 +681,12 @@ export async function createServer(args: CreateArgs, onStep?: Stepper) {
       makeScripts(serverDir, `-jar ${jar}`, args.memory);
     }
     p.end("Launch scripts ready.");
+
+    if (args.optimize) {
+      p.start(0.1, "Installing optimization mods…");
+      await installOptimizations({ dir: serverDir, flavor: "forge", mcVersion: ver, say });
+      p.end("Optimization mods installed.");
+    }
   } else if (args.flavor === "neoforge") {
     const { url } = await neoforgeInstallerUrl(ver);
     const instJar = path.join(serverDir, "neoforge-installer.jar");
@@ -617,6 +714,12 @@ export async function createServer(args: CreateArgs, onStep?: Stepper) {
       makeScripts(serverDir, `-jar ${jar}`, args.memory);
     }
     p.end("Launch scripts ready.");
+
+    if (args.optimize) {
+      p.start(0.1, "Installing optimization mods…");
+      await installOptimizations({ dir: serverDir, flavor: "neoforge", mcVersion: ver, say });
+      p.end("Optimization mods installed.");
+    }
   } else {
     throw new Error(`Unknown flavor: ${args.flavor}`);
   }

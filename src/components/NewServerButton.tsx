@@ -24,6 +24,7 @@ export default function NewServerButton({
   const [memory, setMemory] = useState("4G");
   const [port, setPort] = useState("25565");
   const [cfZipUrl, setCfZipUrl] = useState("");
+  const [installOptimizations, setInstallOptimizations] = useState(false);
   const [eula, _setEula] = useState(false); // underscore to satisfy eslint
 
   const [busy, setBusy] = useState(false);
@@ -40,6 +41,8 @@ export default function NewServerButton({
       document.body.style.overflow = prev;
     };
   }, [open]);
+
+  const optimizationsSupported = flavor !== "vanilla";
 
   async function create() {
     setBusy(true);
@@ -63,6 +66,7 @@ export default function NewServerButton({
           port,
           eula,
           curseforgeServerZipUrl: cfZipUrl || undefined,
+          installOptimizations: optimizationsSupported ? installOptimizations : false,
         }),
       });
 
@@ -166,6 +170,25 @@ export default function NewServerButton({
                 value={cfZipUrl}
                 onChange={(e) => setCfZipUrl(e.target.value)}
               />
+            </div>
+
+            {/* Optimization checkbox */}
+            <div className="sm:col-span-2">
+              <label className="flex items-center gap-2 text-sm text-white/80">
+                <input
+                  type="checkbox"
+                  className="h-4 w-4"
+                  checked={optimizationsSupported && installOptimizations}
+                  onChange={(e) => setInstallOptimizations(e.target.checked)}
+                  disabled={!optimizationsSupported}
+                />
+                Install optimization mods (Lithium, FerriteCore, etc.)
+                {!optimizationsSupported && (
+                  <span className="text-[11px] text-white/50">
+                    (Requires Fabric/Forge/NeoForge)
+                  </span>
+                )}
+              </label>
             </div>
           </div>
 

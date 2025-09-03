@@ -83,8 +83,8 @@ export default function ServerPanel({ name }: { name: string }) {
       {/* Controls */}
       <div className="flex gap-3">
         <Button className="bg-green-500/80 hover:bg-green-500" onClick={() => fire("start")}>Start</Button>
-        <Button className="bg-amber-500/80 hover:bg-amber-500" onClick={() => fire("stop")}>Stop</Button>
-        <Button className="bg-yellow-500/80 hover:bg-yellow-500" onClick={() => fire("restart")}>Restart</Button>
+        <Button className="bg-red-500/80 hover:bg-red-500" onClick={() => fire("stop")}>Stop</Button>
+        <Button className="bg-orange-500/80 hover:bg-orange-500" onClick={() => fire("restart")}>Restart</Button>
       </div>
 
       {/* Status badges */}
