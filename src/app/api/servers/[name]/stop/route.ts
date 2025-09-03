@@ -4,8 +4,9 @@ import { stopServer, type StopResult } from "@/lib/servers";
 
 export async function POST(
   _req: NextRequest,
-  { params }: { params: { name: string } }
+  { params }: { params: Promise<{ name: string }> }
 ) {
-  const out: StopResult = await stopServer(params.name);
+  const { name } = await params;                 // await the Promise
+  const out: StopResult = await stopServer(name);
   return NextResponse.json(out, { status: out.ok ? 200 : 400 });
 }
