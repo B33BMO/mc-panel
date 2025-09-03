@@ -12,7 +12,8 @@ function readProps(file: string): Record<string, string> {
   for (const line of fs.readFileSync(file, "utf8").split(/\r?\n/)) {
     if (!line || line.startsWith("#")) continue;
     const i = line.indexOf("=");
-    if (i !== -1) out[line.slice(0, i)] = line.slice(i + 1);
+    if (i === -1) continue;
+    out[line.slice(0, i)] = line.slice(i + 1);
   }
   return out;
 }
@@ -21,9 +22,10 @@ export async function POST(
   req: NextRequest,
   { params }: { params: { name: string } }
 ) {
+  const { name } = params;
   const { command }: ReqBody = await req.json();
 
-  const propsPath = path.join(P.server(params.name), "server.properties");
+  const propsPath = path.join(P.server(name), "server.properties");
   const props = readProps(propsPath);
   const port = Number(props["rcon.port"] || 25575);
   const password =
