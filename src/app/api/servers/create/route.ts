@@ -1,7 +1,10 @@
 import { NextResponse } from "next/server";
 import { createServer } from "@/lib/installers";
 
-type BodyBase = {
+export const runtime = "nodejs";            // force Node runtime (not Edge)
+export const dynamic = "force-dynamic";     // disable static optimization for streaming
+
+type Body = {
   name: string;
   flavor: "vanilla" | "fabric" | "forge" | "neoforge";
   version: string;
@@ -9,57 +12,48 @@ type BodyBase = {
   port: string;
   eula: boolean;
   curseforgeServerZipUrl?: string;
-};
-
-/** Extended body coming from the modal (checkbox) */
-type Body = BodyBase & {
-  /** If true, we’ll (eventually) add optimization mods after install */
-  installOptimizations?: boolean;
+  installOptimizations?: boolean; // harmless if not present
 };
 
 export async function POST(req: Request) {
   const url = new URL(req.url);
   const streamMode = url.searchParams.get("stream") === "1";
-  const body = (await req.json()) as Body;
 
-  // Split out the checkbox flag (so createServer receives only its known args)
-  const { installOptimizations = false, ...createArgs } = body;
-
-  if (!streamMode) {
-    const out = await createServer(
-      // keep type-safety without `any`
-      createArgs as unknown as Parameters<typeof createServer>[0],
-      () => {}
-    );
-    return NextResponse.json({
-      ...out,
-      installOptimizations, // echo back what was requested
+  let body: Body;
+  try {
+    body = (await req.json()) as Body;
+  } catch {
+    if (!streamMode) {
+      return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
+    }
+    // stream error
+    const stream = new ReadableStream({
+      start(controller) {
+        const write = (l: string) => controller.enqueue(new TextEncoder().encode(l + "\n"));
+        write("ERROR Invalid JSON body");
+        controller.close();
+      },
     });
+    return new Response(stream, { headers: { "Content-Type": "text/plain; charset=utf-8" } });
   }
 
-  // Stream progress lines (SSE-like text stream)
+  if (!streamMode) {
+    // Fallback non-stream
+    const out = await createServer(body, () => {});
+    return NextResponse.json(out);
+  }
+
   const stream = new ReadableStream({
     async start(controller) {
       const enc = new TextEncoder();
       const write = (line: string) => controller.enqueue(enc.encode(line + "\n"));
 
+      // kick an initial line so the client reader starts immediately
+      write("0% Starting…");
+
       try {
-        if (installOptimizations) {
-          write("0% Optimization pack requested (will be applied after base install)...");
-        }
-
-        const out = await createServer(
-          createArgs as unknown as Parameters<typeof createServer>[0],
-          async (m) => write(m)
-        );
-
-        // If/when your installers.ts supports it, you can perform the mod step here
-        // and stream additional progress lines. For now we just acknowledge:
-        if (installOptimizations) {
-          write("100% (note) Optimization pack requested — awaiting installer support.");
-        }
-
-        write(`DONE ${JSON.stringify({ ...out, installOptimizations })}`);
+        const out = await createServer(body, (m) => write(m));
+        write(`DONE ${JSON.stringify(out)}`);
       } catch (e) {
         const msg = e instanceof Error ? e.message : String(e);
         write(`ERROR ${msg}`);
@@ -70,6 +64,10 @@ export async function POST(req: Request) {
   });
 
   return new Response(stream, {
-    headers: { "Content-Type": "text/plain; charset=utf-8" },
+    headers: {
+      "Content-Type": "text/plain; charset=utf-8",
+      "Cache-Control": "no-cache, no-store, must-revalidate",
+      "X-Accel-Buffering": "no", // helps some proxies not buffer
+    },
   });
 }
