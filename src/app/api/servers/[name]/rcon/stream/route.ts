@@ -1,5 +1,5 @@
+import { NextRequest } from "next/server";
 import { paths as P } from "@/lib/servers";
-import { NextResponse } from "next/server";
 import fs from "node:fs";
 import path from "node:path";
 import { spawn } from "node:child_process";
@@ -7,19 +7,15 @@ import { spawn } from "node:child_process";
 export const dynamic = "force-dynamic";
 
 export async function GET(
-  req: Request,
-  ctx: { params: Promise<{ name: string }> }
+  req: NextRequest,
+  { params }: { params: { name: string } }
 ) {
-  const { name } = await ctx.params;
-
-  const logFile = path.join(P.server(name), "logs", "latest.log");
+  const logFile = path.join(P.server(params.name), "logs", "latest.log");
   fs.mkdirSync(path.dirname(logFile), { recursive: true });
 
   const stream = new ReadableStream({
     start(controller) {
       const enc = new TextEncoder();
-
-      // tail -F will follow even if the file is rotated/recreated
       const tail = spawn("tail", ["-n", "200", "-F", logFile]);
 
       const pump = (b: Buffer) => {
@@ -34,9 +30,8 @@ export async function GET(
         try { tail.kill("SIGTERM"); } catch {}
         controller.close();
       };
-      tail.on("close", close);
 
-      // Proper abort: use the request's signal
+      tail.on("close", close);
       req.signal?.addEventListener?.("abort", close);
     },
   });

@@ -1,11 +1,11 @@
-import { NextResponse } from "next/server";
-import { stopServer } from "@/lib/servers";
+// src/app/api/servers/[name]/stop/route.ts
+import { NextRequest, NextResponse } from "next/server";
+import { stopServer, type StopResult } from "@/lib/servers";
 
 export async function POST(
-  _req: Request,
-  ctx: { params: Promise<{ name: string }> }
+  _req: NextRequest,
+  { params }: { params: { name: string } }
 ) {
-  const { name } = await ctx.params;
-  const out = await stopServer(name); // { ok, message }
+  const out: StopResult = await stopServer(params.name);
   return NextResponse.json(out, { status: out.ok ? 200 : 400 });
 }

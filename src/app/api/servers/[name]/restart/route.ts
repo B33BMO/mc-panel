@@ -1,11 +1,11 @@
-import { NextResponse } from "next/server";
-import { restartServer } from "@/lib/servers";
+// src/app/api/servers/[name]/restart/route.ts
+import { NextRequest, NextResponse } from "next/server";
+import { restartServer, type StartResult } from "@/lib/servers";
 
 export async function POST(
-  _req: Request,
-  ctx: { params: Promise<{ name: string }> }
+  _req: NextRequest,
+  { params }: { params: { name: string } }
 ) {
-  const { name } = await ctx.params;
-  const out = await restartServer(name); // StartResult
-  return NextResponse.json({ ok: true, ...out });
+  const out: StartResult = await restartServer(params.name);
+  return NextResponse.json(out, { status: out.ok ? 200 : 400 });
 }
