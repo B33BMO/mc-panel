@@ -1,16 +1,19 @@
+// src/app/api/servers/[name]/rcon/stream/route.ts
 import { NextRequest } from "next/server";
 import { paths as P } from "@/lib/servers";
 import fs from "node:fs";
 import path from "node:path";
 import { spawn } from "node:child_process";
 
-export const dynamic = "force-dynamic";
+export const dynamic = "force-dynamic"; // streaming-friendly
 
 export async function GET(
   req: NextRequest,
-  { params }: { params: { name: string } }
+  ctx: { params: Promise<{ name: string }> } // <-- params is a Promise
 ) {
-  const logFile = path.join(P.server(params.name), "logs", "latest.log");
+  const { name } = await ctx.params; // <-- await it
+
+  const logFile = path.join(P.server(name), "logs", "latest.log");
   fs.mkdirSync(path.dirname(logFile), { recursive: true });
 
   const stream = new ReadableStream({
@@ -32,6 +35,7 @@ export async function GET(
       };
 
       tail.on("close", close);
+      // Some runtimes expose an abort signal on the request; not in TS types everywhere
       req.signal?.addEventListener?.("abort", close);
     },
   });
