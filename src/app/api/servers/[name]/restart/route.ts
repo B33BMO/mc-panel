@@ -4,9 +4,9 @@ import { restartServer, type StartResult } from "@/lib/servers";
 
 export async function POST(
   _req: NextRequest,
-  { params }: { params: Promise<{ name: string }> }
+  { params }: { params: { name: string } }
 ) {
-  const { name } = await params;               // <-- await the Promise
+  const { name } = params;
   const out: StartResult = await restartServer(name);
   return NextResponse.json(out, { status: out.ok ? 200 : 400 });
 }

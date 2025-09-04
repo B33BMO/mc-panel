@@ -1,4 +1,3 @@
-// src/app/api/servers/[name]/rcon/stream/route.ts
 import { NextRequest } from "next/server";
 import { paths as P } from "@/lib/servers";
 import fs from "node:fs";
@@ -9,11 +8,9 @@ export const dynamic = "force-dynamic";
 
 export async function GET(
   req: NextRequest,
-  { params }: { params: Promise<{ name: string }> }
+  { params }: { params: { name: string } }
 ) {
-  const { name } = await params;
-
-  const logFile = path.join(P.server(name), "logs", "latest.log");
+  const logFile = path.join(P.server(params.name), "logs", "latest.log");
   fs.mkdirSync(path.dirname(logFile), { recursive: true });
 
   const stream = new ReadableStream({
@@ -35,7 +32,6 @@ export async function GET(
       };
 
       tail.on("close", close);
-      // NextRequest has an AbortSignal you can use here:
       req.signal?.addEventListener?.("abort", close);
     },
   });
