@@ -22,8 +22,7 @@ export async function POST(
   req: NextRequest,
   ctx: { params: Promise<{ name: string }> }
 ) {
-  const { name } = await ctx.params; // <-- important
-
+  const { name } = await ctx.params;
   const { command }: ReqBody = await req.json();
 
   const propsPath = path.join(P.server(name), "server.properties");
