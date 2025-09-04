@@ -20,9 +20,10 @@ function readProps(file: string): Record<string, string> {
 
 export async function POST(
   req: NextRequest,
-  { params }: { params: { name: string } }
+  ctx: { params: Promise<{ name: string }> }
 ) {
-  const { name } = params;
+  const { name } = await ctx.params; // <-- important
+
   const { command }: ReqBody = await req.json();
 
   const propsPath = path.join(P.server(name), "server.properties");
